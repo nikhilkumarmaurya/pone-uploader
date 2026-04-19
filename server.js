@@ -22,7 +22,6 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Generic multi-file upload
 app.post('/upload', upload.array('files[]'), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0)
@@ -31,15 +30,17 @@ app.post('/upload', upload.array('files[]'), async (req, res) => {
     const results = [];
     for (const file of req.files) {
       const fd = new FormData();
-      fd.append('files[]', file.buffer, { filename: file.originalname, contentType: file.mimetype });
-      const response = await fetch('https://pone.rs/upload?output=json', {
+      fd.append('reqtype', 'fileupload');
+      fd.append('fileToUpload', file.buffer, { filename: file.originalname, contentType: file.mimetype });
+
+      const response = await fetch('https://catbox.moe/user/api.php', {
         method: 'POST', body: fd, headers: fd.getHeaders()
       });
-      const data = await response.json();
-      if (data.success && data.files && data.files.length > 0) {
-        results.push({ name: file.originalname, url: data.files[0].url, success: true });
+      const text = await response.text();
+      if (text.trim().startsWith('http')) {
+        results.push({ name: file.originalname, url: text.trim(), success: true });
       } else {
-        results.push({ name: file.originalname, success: false, error: 'pone.rs rejected' });
+        results.push({ name: file.originalname, success: false, error: text });
       }
     }
     res.json({ success: true, files: results });
@@ -48,27 +49,27 @@ app.post('/upload', upload.array('files[]'), async (req, res) => {
   }
 });
 
-// BcaHub permanent upload — single file, returns plain URL (same as catbox)
 app.post('/upload-perm', upload.single('fileToUpload'), async (req, res) => {
   try {
     if (!req.file) return res.status(500).send('No file received');
 
     const fd = new FormData();
-    fd.append('files[]', req.file.buffer, {
+    fd.append('reqtype', 'fileupload');
+    fd.append('fileToUpload', req.file.buffer, {
       filename: req.file.originalname,
       contentType: req.file.mimetype
     });
 
-    const response = await fetch('https://pone.rs/upload?output=json', {
+    const response = await fetch('https://catbox.moe/user/api.php', {
       method: 'POST', body: fd, headers: fd.getHeaders()
     });
 
-    const data = await response.json();
+    const text = await response.text();
 
-    if (data.success && data.files && data.files.length > 0) {
-      res.send(data.files[0].url); // plain text URL
+    if (text.trim().startsWith('http')) {
+      res.send(text.trim());
     } else {
-      res.status(500).send('pone.rs upload failed');
+      res.status(500).send('Catbox error: ' + text);
     }
   } catch (err) {
     res.status(500).send(err.message);
