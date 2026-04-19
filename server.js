@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 1024 }
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB max
 });
 
 app.use((req, res, next) => {
@@ -22,6 +22,7 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Generic multi-file upload
 app.post('/upload', upload.array('files[]'), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0)
@@ -30,17 +31,15 @@ app.post('/upload', upload.array('files[]'), async (req, res) => {
     const results = [];
     for (const file of req.files) {
       const fd = new FormData();
-      fd.append('reqtype', 'fileupload');
-      fd.append('fileToUpload', file.buffer, { filename: file.originalname, contentType: file.mimetype });
-
-      const response = await fetch('https://catbox.moe/user/api.php', {
+      fd.append('files[]', file.buffer, { filename: file.originalname, contentType: file.mimetype });
+      const response = await fetch('https://pone.rs/upload?output=json', {
         method: 'POST', body: fd, headers: fd.getHeaders()
       });
-      const text = await response.text();
-      if (text.trim().startsWith('http')) {
-        results.push({ name: file.originalname, url: text.trim(), success: true });
+      const data = await response.json();
+      if (data.success && data.files && data.files.length > 0) {
+        results.push({ name: file.originalname, url: data.files[0].url, success: true });
       } else {
-        results.push({ name: file.originalname, success: false, error: text });
+        results.push({ name: file.originalname, success: false, error: 'pone.rs rejected' });
       }
     }
     res.json({ success: true, files: results });
@@ -49,29 +48,37 @@ app.post('/upload', upload.array('files[]'), async (req, res) => {
   }
 });
 
+// BcaHub permanent upload — single file, returns plain URL
 app.post('/upload-perm', upload.single('fileToUpload'), async (req, res) => {
   try {
     if (!req.file) return res.status(500).send('No file received');
 
+    // Extra check — 100MB se bada reject
+    if (req.file.size > 100 * 1024 * 1024) {
+      return res.status(413).send('File too large. Max 100MB allowed.');
+    }
+
     const fd = new FormData();
-    fd.append('reqtype', 'fileupload');
-    fd.append('fileToUpload', req.file.buffer, {
+    fd.append('files[]', req.file.buffer, {
       filename: req.file.originalname,
       contentType: req.file.mimetype
     });
 
-    const response = await fetch('https://catbox.moe/user/api.php', {
+    const response = await fetch('https://pone.rs/upload?output=json', {
       method: 'POST', body: fd, headers: fd.getHeaders()
     });
 
-    const text = await response.text();
+    const data = await response.json();
 
-    if (text.trim().startsWith('http')) {
-      res.send(text.trim());
+    if (data.success && data.files && data.files.length > 0) {
+      res.send(data.files[0].url);
     } else {
-      res.status(500).send('Catbox error: ' + text);
+      res.status(500).send('pone.rs upload failed');
     }
   } catch (err) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).send('File too large. Max 100MB allowed.');
+    }
     res.status(500).send(err.message);
   }
 });
